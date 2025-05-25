@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
-#include <math.h>   
+#include <math.h>
 
 #include "reduction.h"
 
@@ -30,7 +30,7 @@ void cudaMemcpyToHost(void* dst, void* src, int size) {
 }
 
 void reduce_ref(const int* const g_idata, int* const g_odata, const int n) {
-    g_odata[0] = 0; 
+    g_odata[0] = 0;
     for (int i = 0; i < n; i++)
         g_odata[0] += g_idata[i];
 }
@@ -46,7 +46,7 @@ void reduce_ref(const int* const g_idata, int* const g_odata, const int n) {
     } while (0)
 
 static __global__ void kernel1_interleaved_divergent_opt(const int *g_idata, int *g_odata, unsigned int n_elements_in_pass) {
-    extern __shared__ int sdata[]; 
+    extern __shared__ int sdata[];
 
     unsigned int tid = threadIdx.x;
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -54,13 +54,13 @@ static __global__ void kernel1_interleaved_divergent_opt(const int *g_idata, int
     if (i < n_elements_in_pass) {
         sdata[tid] = g_idata[i];
     } else {
-        sdata[tid] = 0; 
+        sdata[tid] = 0;
     }
     __syncthreads();
 
     for (unsigned int s = 1; s < blockDim.x; s *= 2) {
         if (tid % (2 * s) == 0) {
-            if (tid + s < blockDim.x) { 
+            if (tid + s < blockDim.x) {
                  sdata[tid] += sdata[tid + s];
             }
         }
@@ -73,7 +73,7 @@ static __global__ void kernel1_interleaved_divergent_opt(const int *g_idata, int
 }
 
 static __global__ void kernel2_interleaved_nondivergent_opt(const int *g_idata, int *g_odata, unsigned int n_elements_in_pass) {
-    extern __shared__ int sdata[]; 
+    extern __shared__ int sdata[];
 
     unsigned int tid = threadIdx.x;
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -88,7 +88,7 @@ static __global__ void kernel2_interleaved_nondivergent_opt(const int *g_idata, 
     for (unsigned int s = 1; s < blockDim.x; s *= 2) {
         int index = 2 * s * tid;
         if (index < blockDim.x) {
-            if (index + s < blockDim.x) { 
+            if (index + s < blockDim.x) {
                 sdata[index] += sdata[index + s];
             }
         }
@@ -126,7 +126,7 @@ static __global__ void kernel3_sequential_addressing_opt(const int *g_idata, int
 }
 
 static __global__ void kernel4_first_add_during_load_opt(const int *g_idata, int *g_odata, unsigned int n_elements_in_pass) {
-    extern __shared__ int sdata[]; 
+    extern __shared__ int sdata[];
 
     unsigned int tid = threadIdx.x;
     unsigned int i1 = blockIdx.x * (blockDim.x * 2) + tid;
@@ -137,7 +137,7 @@ static __global__ void kernel4_first_add_during_load_opt(const int *g_idata, int
     } else if (i1 < n_elements_in_pass) {
         sdata[tid] = g_idata[i1];
     } else {
-        sdata[tid] = 0; 
+        sdata[tid] = 0;
     }
     __syncthreads();
 
@@ -154,7 +154,7 @@ static __global__ void kernel4_first_add_during_load_opt(const int *g_idata, int
 }
 
 static __global__ void kernel5_unroll_last_warp_opt(const int *g_idata, int *g_odata, unsigned int n_elements_in_pass) {
-    extern __shared__ volatile int sdata_volatile[]; 
+    extern __shared__ volatile int sdata_volatile[];
 
     unsigned int tid = threadIdx.x;
     unsigned int i1 = blockIdx.x * (blockDim.x * 2) + tid;
@@ -169,15 +169,15 @@ static __global__ void kernel5_unroll_last_warp_opt(const int *g_idata, int *g_o
     }
     __syncthreads();
 
-    for (unsigned int s = blockDim.x / 2; s > 32; s >>= 1) { 
+    for (unsigned int s = blockDim.x / 2; s > 32; s >>= 1) {
         if (tid < s) {
             sdata_volatile[tid] += sdata_volatile[tid + s];
         }
         __syncthreads();
     }
 
-    if (tid < 32) { 
-        if (blockDim.x >= 64 && tid < 32) sdata_volatile[tid] += sdata_volatile[tid + 32];
+    if (tid < 32) {
+        if (blockDim.x >= 64 && tid < 32) sdata_volatile[tid] += sdata_volatile[tid + 32]; // tid < 32 is redundant here
         if (blockDim.x >= 32 && tid < 16) sdata_volatile[tid] += sdata_volatile[tid + 16];
         if (blockDim.x >= 16 && tid < 8)  sdata_volatile[tid] += sdata_volatile[tid + 8];
         if (blockDim.x >= 8  && tid < 4)  sdata_volatile[tid] += sdata_volatile[tid + 4];
@@ -191,7 +191,7 @@ static __global__ void kernel5_unroll_last_warp_opt(const int *g_idata, int *g_o
 }
 
 template <unsigned int blockSize>
-static __device__ void warpReduce_k6_opt(volatile int* sdata_param, int tid) { 
+static __device__ void warpReduce_k6_opt(volatile int* sdata_param, int tid) {
     if (blockSize >= 64) sdata_param[tid] += sdata_param[tid + 32];
     if (blockSize >= 32) sdata_param[tid] += sdata_param[tid + 16];
     if (blockSize >= 16) sdata_param[tid] += sdata_param[tid + 8];
@@ -202,11 +202,11 @@ static __device__ void warpReduce_k6_opt(volatile int* sdata_param, int tid) {
 
 template <unsigned int blockSize>
 static __global__ void kernel6_completely_unrolled_opt(const int *g_idata, int *g_odata, unsigned int n_elements_in_pass) {
-    extern __shared__ volatile int sdata_volatile[]; 
+    extern __shared__ volatile int sdata_volatile[];
 
     unsigned int tid = threadIdx.x;
-    unsigned int i1 = blockIdx.x * (blockSize * 2) + tid; 
-    unsigned int i2 = i1 + blockSize; 
+    unsigned int i1 = blockIdx.x * (blockSize * 2) + tid;
+    unsigned int i2 = i1 + blockSize;
 
     if (i1 < n_elements_in_pass && i2 < n_elements_in_pass) {
         sdata_volatile[tid] = g_idata[i1] + g_idata[i2];
@@ -221,8 +221,8 @@ static __global__ void kernel6_completely_unrolled_opt(const int *g_idata, int *
     if (blockSize >= 512)  { if (tid < 256) { sdata_volatile[tid] += sdata_volatile[tid + 256]; } __syncthreads(); }
     if (blockSize >= 256)  { if (tid < 128) { sdata_volatile[tid] += sdata_volatile[tid + 128]; } __syncthreads(); }
     if (blockSize >= 128)  { if (tid <  64) { sdata_volatile[tid] += sdata_volatile[tid +  64]; } __syncthreads(); }
-    
-    if (tid < 32) { 
+
+    if (tid < 32) {
         warpReduce_k6_opt<blockSize>(sdata_volatile, tid);
     }
 
@@ -232,30 +232,30 @@ static __global__ void kernel6_completely_unrolled_opt(const int *g_idata, int *
 }
 
 template <unsigned int blockSize>
-static __global__ void kernel7_final_optimized_opt(const int *g_idata, int *g_odata, unsigned int n_elements_in_pass) {
+static __global__ void kernel7_final_optimized_opt(const int *g_idata, int *g_odata, const int n_total_elements_in_kernel) {
     extern __shared__ volatile int sdata_volatile[];
 
     unsigned int tid = threadIdx.x;
-    unsigned int i = blockIdx.x * (blockSize * 2) + tid; 
-    unsigned int gridSize_elements_processed_per_step = gridDim.x * blockSize * 2; 
+    unsigned int i = blockIdx.x * (blockSize * 2) + tid;
+    unsigned int gridSize_elements_processed_per_block_per_iteration = gridDim.x * blockSize * 2;
 
-    sdata_volatile[tid] = 0; 
+    sdata_volatile[tid] = 0;
 
-    while (i < n_elements_in_pass) {
+    while (i < n_total_elements_in_kernel) {
         sdata_volatile[tid] += g_idata[i];
-        if (i + blockSize < n_elements_in_pass) { 
+        if (i + blockSize < n_total_elements_in_kernel) {
             sdata_volatile[tid] += g_idata[i + blockSize];
         }
-        i += gridSize_elements_processed_per_step;
+        i += gridSize_elements_processed_per_block_per_iteration;
     }
-    __syncthreads(); 
+    __syncthreads();
 
     if (blockSize >= 1024) { if (tid < 512) { sdata_volatile[tid] += sdata_volatile[tid + 512]; } __syncthreads(); }
     if (blockSize >= 512)  { if (tid < 256) { sdata_volatile[tid] += sdata_volatile[tid + 256]; } __syncthreads(); }
     if (blockSize >= 256)  { if (tid < 128) { sdata_volatile[tid] += sdata_volatile[tid + 128]; } __syncthreads(); }
     if (blockSize >= 128)  { if (tid <  64) { sdata_volatile[tid] += sdata_volatile[tid +  64]; } __syncthreads(); }
-    
-    if (tid < 32) { 
+
+    if (tid < 32) {
         if (blockSize >= 64) sdata_volatile[tid] += sdata_volatile[tid + 32];
         if (blockSize >= 32) sdata_volatile[tid] += sdata_volatile[tid + 16];
         if (blockSize >= 16) sdata_volatile[tid] += sdata_volatile[tid + 8];
@@ -269,31 +269,123 @@ static __global__ void kernel7_final_optimized_opt(const int *g_idata, int *g_od
     }
 }
 
-void reduce_optimize(const int* const g_idata_host_unused, 
-                     int* const g_odata_host_unused,    
-                     const int* d_initial_input, 
-                     int* d_final_output,        
-                     const int n_total_elements) {
+void reduce_optimize(const int* const g_idata,
+                     int* const g_odata,
+                     const int* d_idata,
+                     int* d_odata,
+                     const int n) {
+
+    if (n == 0) {
+        int zero_val = 0;
+        REDUCE_OPTIMIZE_CUDA_CHECK(cudaMemcpy(d_odata, &zero_val, sizeof(int), cudaMemcpyHostToDevice));
+        return;
+    }
+    if (n == 1) {
+        REDUCE_OPTIMIZE_CUDA_CHECK(cudaMemcpy(d_odata, d_idata, sizeof(int), cudaMemcpyDeviceToDevice));
+        return;
+    }
+
+    const unsigned int k7_chosen_blockSize = 256;
+    const unsigned int trace_blockSize = 256; 
+    size_t trace_shared_mem_int = trace_blockSize * sizeof(int);
+    size_t trace_shared_mem_volatile_int = trace_blockSize * sizeof(volatile int);
+
+
+    /*
+    // Kernel 1 
+    {
+        unsigned int num_blocks = (n + trace_blockSize - 1) / trace_blockSize;
+        int* target_output_k1 = (num_blocks == 1) ? d_odata : nullptr;
+        if (target_output_k1) { 
+            kernel1_interleaved_divergent_opt<<<num_blocks, trace_blockSize, trace_shared_mem_int>>>(
+                d_idata, target_output_k1, n);
+            REDUCE_OPTIMIZE_CUDA_CHECK(cudaGetLastError());
+        }
+    }
     
-    if (n_total_elements == 0) {
-        int zero_val = 0; 
-        REDUCE_OPTIMIZE_CUDA_CHECK(cudaMemcpy(d_final_output, &zero_val, sizeof(int), cudaMemcpyHostToDevice)); 
-        return; 
-    }
-    if (n_total_elements == 1) { 
-        REDUCE_OPTIMIZE_CUDA_CHECK(cudaMemcpy(d_final_output, d_initial_input, sizeof(int), cudaMemcpyDeviceToDevice)); 
-        return; 
+    // Kernel 2 
+    {
+        unsigned int num_blocks = (n + trace_blockSize - 1) / trace_blockSize;
+        int* target_output_k2 = (num_blocks == 1) ? d_odata : nullptr;
+        if (target_output_k2) {
+             kernel2_interleaved_nondivergent_opt<<<num_blocks, trace_blockSize, trace_shared_mem_int>>>(
+                d_idata, target_output_k2, n);
+            REDUCE_OPTIMIZE_CUDA_CHECK(cudaGetLastError());
+        }
     }
 
-    const unsigned int chosen_blockSize = 256; 
-    size_t shared_mem_per_block = chosen_blockSize * sizeof(int);
+    // Kernel 3 
+    {
+        unsigned int num_blocks = (n + trace_blockSize - 1) / trace_blockSize;
+        int* target_output_k3 = (num_blocks == 1) ? d_odata : nullptr;
+        if (target_output_k3) {
+            kernel3_sequential_addressing_opt<<<num_blocks, trace_blockSize, trace_shared_mem_int>>>(
+                d_idata, target_output_k3, n);
+            REDUCE_OPTIMIZE_CUDA_CHECK(cudaGetLastError());
+        }
+    }
 
-    const int* d_current_pass_input = d_initial_input;
+    // Kernel 4 
+    {
+        unsigned int elements_per_block = trace_blockSize * 2;
+        unsigned int num_blocks = (n + elements_per_block - 1) / elements_per_block;
+        int* target_output_k4 = (num_blocks == 1) ? d_odata : nullptr;
+        if (target_output_k4) {
+            kernel4_first_add_during_load_opt<<<num_blocks, trace_blockSize, trace_shared_mem_int>>>(
+                d_idata, target_output_k4, n);
+            REDUCE_OPTIMIZE_CUDA_CHECK(cudaGetLastError());
+        }
+    }
+
+    // Kernel 5 
+    {
+        unsigned int elements_per_block = trace_blockSize * 2;
+        unsigned int num_blocks = (n + elements_per_block - 1) / elements_per_block;
+        int* target_output_k5 = (num_blocks == 1) ? d_odata : nullptr;
+        if (target_output_k5) {
+            kernel5_unroll_last_warp_opt<<<num_blocks, trace_blockSize, trace_shared_mem_volatile_int>>>(
+                d_idata, target_output_k5, n);
+            REDUCE_OPTIMIZE_CUDA_CHECK(cudaGetLastError());
+        }
+    }
+
+    // Kernel 6 
+    {
+        const unsigned int k6_bs = trace_blockSize;
+        unsigned int elements_per_block = k6_bs * 2;
+        unsigned int num_blocks = (n + elements_per_block - 1) / elements_per_block;
+        int* target_output_k6 = (num_blocks == 1) ? d_odata : nullptr;
+
+        if (target_output_k6) {
+            if (k6_bs == 64) {
+                 kernel6_completely_unrolled_opt<64><<<num_blocks, k6_bs, trace_shared_mem_volatile_int>>>(
+                     d_idata, target_output_k6, n);
+            } else if (k6_bs == 128) {
+                 kernel6_completely_unrolled_opt<128><<<num_blocks, k6_bs, trace_shared_mem_volatile_int>>>(
+                     d_idata, target_output_k6, n);
+            } else if (k6_bs == 256) {
+                 kernel6_completely_unrolled_opt<256><<<num_blocks, k6_bs, trace_shared_mem_volatile_int>>>(
+                     d_idata, target_output_k6, n);
+            } else if (k6_bs == 512) {
+                 kernel6_completely_unrolled_opt<512><<<num_blocks, k6_bs, trace_shared_mem_volatile_int>>>(
+                     d_idata, target_output_k6, n);
+            } else if (k6_bs == 1024) {
+                 kernel6_completely_unrolled_opt<1024><<<num_blocks, k6_bs, trace_shared_mem_volatile_int>>>(
+                     d_idata, target_output_k6, n);
+            }
+            REDUCE_OPTIMIZE_CUDA_CHECK(cudaGetLastError());
+        }
+    }
+    */
+    
+    
+    const int* d_current_pass_input = d_idata;
     int* d_current_pass_output = nullptr;
     int* d_temp_buffer = nullptr;
+    int current_elements_to_reduce = n;
+    bool is_first_pass_for_temp_alloc = true;
+    size_t k7_shared_mem_size = k7_chosen_blockSize * sizeof(volatile int);
 
-    int current_elements_to_reduce = n_total_elements;
-    bool is_first_pass_for_temp_alloc = true; 
 
     auto internal_allocate = [&](void** ptr, size_t size) {
         REDUCE_OPTIMIZE_CUDA_CHECK(cudaMalloc(ptr, size));
@@ -305,63 +397,73 @@ void reduce_optimize(const int* const g_idata_host_unused,
     };
 
     while (current_elements_to_reduce > 1) {
-        unsigned int elements_covered_per_block_for_grid_calc = chosen_blockSize * 2;
-        unsigned int num_blocks_for_this_pass = (current_elements_to_reduce + elements_covered_per_block_for_grid_calc - 1) / elements_covered_per_block_for_grid_calc;
-        
+        unsigned int elements_processed_per_block_k7 = k7_chosen_blockSize * 2;
+        unsigned int num_blocks_for_this_pass = (current_elements_to_reduce + elements_processed_per_block_k7 - 1) / elements_processed_per_block_k7;
+
         if (num_blocks_for_this_pass == 0 && current_elements_to_reduce > 0) {
             num_blocks_for_this_pass = 1;
         }
 
-        if (num_blocks_for_this_pass == 1) { 
-            d_current_pass_output = d_final_output;
-        } else { 
-            if (is_first_pass_for_temp_alloc) { 
+        if (num_blocks_for_this_pass == 1) {
+            d_current_pass_output = d_odata;
+        } else {
+            if (is_first_pass_for_temp_alloc) {
                 internal_allocate((void**)&d_temp_buffer, num_blocks_for_this_pass * sizeof(int));
                 d_current_pass_output = d_temp_buffer;
-                is_first_pass_for_temp_alloc = false; 
-            } else if (d_current_pass_input == d_temp_buffer) { 
-                d_current_pass_output = d_final_output;
-            } else { 
+                is_first_pass_for_temp_alloc = false;
+            } else {
                 d_current_pass_output = d_temp_buffer;
             }
         }
-        
-        switch (chosen_blockSize) {
+
+        if (d_current_pass_input == d_current_pass_output && num_blocks_for_this_pass > 1) {
+        }
+
+
+        switch (k7_chosen_blockSize) {
             case 64:
-                kernel7_final_optimized_opt<64><<<num_blocks_for_this_pass, chosen_blockSize, shared_mem_per_block>>>(
+                kernel7_final_optimized_opt<64><<<num_blocks_for_this_pass, k7_chosen_blockSize, k7_shared_mem_size>>>(
                     d_current_pass_input, d_current_pass_output, current_elements_to_reduce);
                 break;
             case 128:
-                kernel7_final_optimized_opt<128><<<num_blocks_for_this_pass, chosen_blockSize, shared_mem_per_block>>>(
+                kernel7_final_optimized_opt<128><<<num_blocks_for_this_pass, k7_chosen_blockSize, k7_shared_mem_size>>>(
                     d_current_pass_input, d_current_pass_output, current_elements_to_reduce);
                 break;
             case 256:
-                kernel7_final_optimized_opt<256><<<num_blocks_for_this_pass, chosen_blockSize, shared_mem_per_block>>>(
+                kernel7_final_optimized_opt<256><<<num_blocks_for_this_pass, k7_chosen_blockSize, k7_shared_mem_size>>>(
                     d_current_pass_input, d_current_pass_output, current_elements_to_reduce);
                 break;
             case 512:
-                kernel7_final_optimized_opt<512><<<num_blocks_for_this_pass, chosen_blockSize, shared_mem_per_block>>>(
+                kernel7_final_optimized_opt<512><<<num_blocks_for_this_pass, k7_chosen_blockSize, k7_shared_mem_size>>>(
                     d_current_pass_input, d_current_pass_output, current_elements_to_reduce);
                 break;
             case 1024:
-                kernel7_final_optimized_opt<1024><<<num_blocks_for_this_pass, chosen_blockSize, shared_mem_per_block>>>(
+                kernel7_final_optimized_opt<1024><<<num_blocks_for_this_pass, k7_chosen_blockSize, k7_shared_mem_size>>>(
                     d_current_pass_input, d_current_pass_output, current_elements_to_reduce);
                 break;
             default:
-                fprintf(stderr, "reduce_optimize: Unsupported chosen_blockSize %u\n", chosen_blockSize);
+                fprintf(stderr, "reduce_optimize: Unsupported k7_chosen_blockSize %u\n", k7_chosen_blockSize);
                 exit(EXIT_FAILURE);
         }
-        REDUCE_OPTIMIZE_CUDA_CHECK(cudaGetLastError()); 
+        REDUCE_OPTIMIZE_CUDA_CHECK(cudaGetLastError());
+        REDUCE_OPTIMIZE_CUDA_CHECK(cudaDeviceSynchronize());
+
 
         d_current_pass_input = d_current_pass_output;
-        current_elements_to_reduce = num_blocks_for_this_pass; 
+        current_elements_to_reduce = num_blocks_for_this_pass;
+    }
+    
+
+    if (d_current_pass_input != d_odata && current_elements_to_reduce == 1) {
+        REDUCE_OPTIMIZE_CUDA_CHECK(cudaMemcpy(d_odata, d_current_pass_input, sizeof(int), cudaMemcpyDeviceToDevice));
+    } else if (current_elements_to_reduce != 1 && n > 0) {
+        int error_val = 0; 
+        REDUCE_OPTIMIZE_CUDA_CHECK(cudaMemcpy(d_odata, &error_val, sizeof(int), cudaMemcpyHostToDevice));
     }
 
-    if (d_current_pass_input != d_final_output && current_elements_to_reduce == 1) {
-        REDUCE_OPTIMIZE_CUDA_CHECK(cudaMemcpy(d_final_output, d_current_pass_input, sizeof(int), cudaMemcpyDeviceToDevice));
-    }
-        
+
     if (d_temp_buffer) {
-        internal_free(d_temp_buffer); 
+        internal_free(d_temp_buffer);
     }
+    
 }
